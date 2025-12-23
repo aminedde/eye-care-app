@@ -1,115 +1,44 @@
-name: Build EyeCare App
+name: Build EyeCare
 
 on:
   workflow_dispatch:
   push:
     branches: [ main ]
-    paths:
-      - 'src/**'
-      - 'requirements.txt'
-  release:
-    types: [ created ]
 
 env:
   PYTHONIOENCODING: utf-8
   PYTHONUTF8: 1
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build:
+    runs-on: windows-2019    # 使用旧版Windows Server
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
       
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          python-version: '3.8'    # 使用Python 3.8，兼容Win7
       
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller
-          pip install -r requirements.txt
+        run: pip install pyinstaller pystray Pillow
       
-      - name: Create icon
+      - name: Create Icon
         shell: python
         run: |
           from PIL import Image, ImageDraw
-          
-          sizes = [16, 32, 48, 64, 128, 256]
-          images = []
-          
-          for size in sizes:
-              img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
-              draw = ImageDraw.Draw(img)
-              s = size / 64
-              
-              # Green circle background
-              draw.ellipse(
-                  [int(2*s), int(2*s), int(62*s), int(62*s)], 
-                  fill='#4CAF50', 
-                  outline='#2E7D32', 
-                  width=max(1, int(2*s))
-              )
-              
-              # Eye white
-              draw.ellipse(
-                  [int(10*s), int(20*s), int(54*s), int(44*s)], 
-                  fill='white', 
-                  outline='#1a1a1a', 
-                  width=max(1, int(1*s))
-              )
-              
-              # Pupil
-              draw.ellipse(
-                  [int(25*s), int(26*s), int(39*s), int(38*s)], 
-                  fill='#1a1a1a'
-              )
-              
-              # Highlight
-              draw.ellipse(
-                  [int(29*s), int(28*s), int(35*s), int(34*s)], 
-                  fill='white'
-              )
-              
-              images.append(img)
-          
-          images[0].save(
-              'icon.ico', 
-              format='ICO', 
-              sizes=[(s, s) for s in sizes], 
-              append_images=images[1:]
-          )
+          img = Image.new('RGBA', (256, 256), (0,0,0,0))
+          d = ImageDraw.Draw(img)
+          d.ellipse([8,8,248,248], fill='#4CAF50', outline='#2E7D32', width=8)
+          d.ellipse([40,80,216,176], fill='white', outline='#333', width=4)
+          d.ellipse([100,108,156,148], fill='#1a1a1a')
+          d.ellipse([116,118,140,138], fill='white')
+          img.save('icon.ico', format='ICO')
       
       - name: Build EXE
-        run: |
-          pyinstaller --onefile --windowed --name "EyeCare" --icon=icon.ico src/eye_care.py
+        run: pyinstaller --onefile --windowed --name EyeCare --icon=icon.ico src/eye_care.py
       
-      - name: Rename output
-        run: |
-          move "dist\EyeCare.exe" "dist\EyeCare-Windows.exe"
-      
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: EyeCare-Windows
-          path: dist/EyeCare-Windows.exe
-          retention-days: 30
-      
-      - name: Upload to Release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v1
-        with:
-          files: dist/EyeCare-Windows.exe
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}          pyinstaller --onefile --windowed --name "EyeCare-Linux" src/eye_care.py
-      
-      - name: 上传构建产物
-        uses: actions/upload-artifact@v4
-        with:
-          name: 护眼卫士-Linux
-          path: dist/EyeCare-Linux
-          retention-days: 30
+          name: EyeCare-Windows-Compatible
+          path: dist/EyeCare.exe
