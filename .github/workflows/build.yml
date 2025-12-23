@@ -1,108 +1,111 @@
-name: 打包护眼卫士
+name: Build EyeCare App
 
 on:
-  # 手动触发
   workflow_dispatch:
-  
-  # 推送到main分支时触发
   push:
     branches: [ main ]
     paths:
       - 'src/**'
       - 'requirements.txt'
-  
-  # 发布Release时触发
   release:
     types: [ created ]
+
+env:
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: 1
 
 jobs:
   build-windows:
     runs-on: windows-latest
     
     steps:
-      # 1. 检出代码
-      - name: 检出代码
+      - name: Checkout code
         uses: actions/checkout@v4
       
-      # 2. 设置Python环境
-      - name: 设置 Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
       
-      # 3. 安装依赖
-      - name: 安装依赖
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
           pip install -r requirements.txt
       
-      # 4. 生成图标(如果没有上传)
-      - name: 生成图标
+      - name: Create icon
+        shell: python
         run: |
-          python -c "
           from PIL import Image, ImageDraw
+          
           sizes = [16, 32, 48, 64, 128, 256]
           images = []
+          
           for size in sizes:
               img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
               draw = ImageDraw.Draw(img)
               s = size / 64
-              draw.ellipse([int(2*s), int(2*s), int(62*s), int(62*s)], fill='#4CAF50', outline='#2E7D32', width=max(1, int(2*s)))
-              draw.ellipse([int(10*s), int(20*s), int(54*s), int(44*s)], fill='white', outline='#1a1a1a', width=max(1, int(1*s)))
-              draw.ellipse([int(25*s), int(26*s), int(39*s), int(38*s)], fill='#1a1a1a')
-              draw.ellipse([int(29*s), int(28*s), int(35*s), int(34*s)], fill='white')
+              
+              # Green circle background
+              draw.ellipse(
+                  [int(2*s), int(2*s), int(62*s), int(62*s)], 
+                  fill='#4CAF50', 
+                  outline='#2E7D32', 
+                  width=max(1, int(2*s))
+              )
+              
+              # Eye white
+              draw.ellipse(
+                  [int(10*s), int(20*s), int(54*s), int(44*s)], 
+                  fill='white', 
+                  outline='#1a1a1a', 
+                  width=max(1, int(1*s))
+              )
+              
+              # Pupil
+              draw.ellipse(
+                  [int(25*s), int(26*s), int(39*s), int(38*s)], 
+                  fill='#1a1a1a'
+              )
+              
+              # Highlight
+              draw.ellipse(
+                  [int(29*s), int(28*s), int(35*s), int(34*s)], 
+                  fill='white'
+              )
+              
               images.append(img)
-          images[0].save('icon.ico', format='ICO', sizes=[(s, s) for s in sizes], append_images=images[1:])
-          print('图标生成完成')
-          "
+          
+          images[0].save(
+              'icon.ico', 
+              format='ICO', 
+              sizes=[(s, s) for s in sizes], 
+              append_images=images[1:]
+          )
       
-      # 5. 打包EXE
-      - name: 打包 EXE
+      - name: Build EXE
         run: |
-          pyinstaller --onefile --windowed --name "护眼卫士" --icon=icon.ico src/eye_care.py
+          pyinstaller --onefile --windowed --name "EyeCare" --icon=icon.ico src/eye_care.py
       
-      # 6. 上传构建产物
-      - name: 上传构建产物
+      - name: Rename output
+        run: |
+          move "dist\EyeCare.exe" "dist\EyeCare-Windows.exe"
+      
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 护眼卫士-Windows
-          path: dist/护眼卫士.exe
+          name: EyeCare-Windows
+          path: dist/EyeCare-Windows.exe
           retention-days: 30
       
-      # 7. 如果是Release，上传到Release
-      - name: 上传到 Release
+      - name: Upload to Release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v1
         with:
-          files: dist/护眼卫士.exe
+          files: dist/EyeCare-Windows.exe
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # 可选：同时打包Linux版本
-  build-linux:
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-      
-      - name: 设置 Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-      
-      - name: 安装依赖
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller
-          pip install -r requirements.txt
-      
-      - name: 打包
-        run: |
-          pyinstaller --onefile --windowed --name "EyeCare-Linux" src/eye_care.py
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}          pyinstaller --onefile --windowed --name "EyeCare-Linux" src/eye_care.py
       
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
