@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-护眼卫士 v1.3 - 修复色温和亮度问题
+护眼卫士 v1.4 - 修复色温和亮度问题
 """
 
 import ctypes
@@ -39,13 +39,10 @@ class GammaController:
     def kelvin_to_rgb(self, kelvin):
         """
         色温转RGB - Tanner Helland算法
-        范围: 1000K - 40000K
-        返回: (r, g, b) 范围0.0-1.0
         """
         kelvin = max(1000, min(40000, kelvin))
         temp = kelvin / 100.0
         
-        # 红色
         if temp <= 66:
             red = 255.0
         else:
@@ -53,7 +50,6 @@ class GammaController:
             red = 329.698727446 * math.pow(red, -0.1332047592)
             red = max(0, min(255, red))
         
-        # 绿色
         if temp <= 66:
             if temp <= 1:
                 green = 0
@@ -64,7 +60,6 @@ class GammaController:
             green = 288.1221695283 * math.pow(green, -0.0755148492)
         green = max(0, min(255, green))
         
-        # 蓝色
         if temp >= 66:
             blue = 255.0
         elif temp <= 19:
@@ -76,11 +71,12 @@ class GammaController:
         
         return red / 255.0, green / 255.0, blue / 255.0
 
-    def set_gamma(self, temperature=6500, brightness=100):
+    def set_gamma(self, temperature=6500, brightness=100, strength=70):
         """
         设置屏幕Gamma
-        temperature: 2600-6500K (Windows API限制)
-        brightness: 50-100% (Windows API限制)
+        temperature: 色温 (K)
+        brightness: 亮度 (%)
+        strength: 色温效果强度 (%)
         """
         if not self.supported:
             return False
@@ -93,60 +89,36 @@ class GammaController:
             # 获取色温RGB
             r, g, b = self.kelvin_to_rgb(temperature)
             
-            # 亮度系数 (限制范围避免API拒绝)
-            bf = max(0.5, brightness / 100.0)
+            # 限制效果强度 (与白色混合)
+            # strength=100 表示完全应用色温，strength=0 表示纯白
+            s = strength / 100.0
+            r = 1.0 - (1.0 - r) * s
+            g = 1.0 - (1.0 - g) * s
+            b = 1.0 - (1.0 - b) * s
             
-            # 应用亮度到各通道
+            # 亮度补偿：将最大通道归一化到1.0，防止变暗
+            max_channel = max(r, g, b)
+            if max_channel > 0.01:
+                r = r / max_channel
+                g = g / max_channel
+                b = b / max_channel
+            
+            # 应用用户亮度设置
+            bf = brightness / 100.0
             r = r * bf
             g = g * bf
             b = b * bf
             
-            # 为了让低色温更明显，使用gamma曲线增强效果
-            # gamma < 1 会让中间调变亮，增强颜色对比
-            r_gamma = 0.7 + (r * 0.3)  # 0.7-1.0
-            g_gamma = 0.7 + (g * 0.3)
-            b_gamma = 0.7 + (b * 0.3)
-            
             # 创建Gamma Ramp
             ramp = (ctypes.c_ushort * 256 * 3)()
-            
             for i in range(256):
-                # 归一化输入
-                x = i / 255.0
-                
-                # 应用gamma曲线: output = input^(1/gamma) * ratio
-                ramp[0][i] = int(min(65535, pow(x, 1.0/r_gamma) * r * 65535))
-                ramp[1][i] = int(min(65535, pow(x, 1.0/g_gamma) * g * 65535))
-                ramp[2][i] = int(min(65535, pow(x, 1.0/b_gamma) * b * 65535))
+                ramp[0][i] = min(65535, int(i * 256 * r))
+                ramp[1][i] = min(65535, int(i * 256 * g))
+                ramp[2][i] = min(65535, int(i * 256 * b))
             
             result = self.gdi32.SetDeviceGammaRamp(hdc, ctypes.byref(ramp))
             return bool(result)
-        finally:
-            self.user32.ReleaseDC(None, hdc)
-
-    def set_simple_gamma(self, temperature=6500, brightness=100):
-        """
-        简单直接的Gamma设置 - 备用方法
-        """
-        if not self.supported:
-            return False
-        
-        hdc = self.user32.GetDC(None)
-        if not hdc:
-            return False
-        
-        try:
-            r, g, b = self.kelvin_to_rgb(temperature)
-            bf = brightness / 100.0
             
-            ramp = (ctypes.c_ushort * 256 * 3)()
-            
-            for i in range(256):
-                ramp[0][i] = int(min(65535, i * 256 * r * bf))
-                ramp[1][i] = int(min(65535, i * 256 * g * bf))
-                ramp[2][i] = int(min(65535, i * 256 * b * bf))
-            
-            return bool(self.gdi32.SetDeviceGammaRamp(hdc, ctypes.byref(ramp)))
         finally:
             self.user32.ReleaseDC(None, hdc)
 
@@ -154,9 +126,11 @@ class GammaController:
         """恢复默认"""
         if not self.supported:
             return False
+        
         hdc = self.user32.GetDC(None)
         if not hdc:
             return False
+        
         try:
             ramp = (ctypes.c_ushort * 256 * 3)()
             for i in range(256):
@@ -172,7 +146,7 @@ class GammaController:
 class EyeCareApp:
     """护眼软件主程序"""
     
-    VERSION = "1.3.0"
+    VERSION = "1.4.0"
 
     def __init__(self):
         self.config_file = os.path.join(APP_PATH, "eye_care_config.json")
@@ -185,7 +159,7 @@ class EyeCareApp:
             "enabled": True,
             "temperature": 5500,
             "brightness": 100,
-            "use_simple_mode": False,
+            "strength": 70,
             "reminder_enabled": True,
             "reminder_interval": 45,
             "minimize_to_tray": True,
@@ -205,7 +179,7 @@ class EyeCareApp:
     def create_window(self):
         self.root = tk.Tk()
         self.root.title(f"护眼卫士 v{self.VERSION}")
-        self.root.geometry("420x550")
+        self.root.geometry("420x600")
         self.root.resizable(False, False)
         
         try:
@@ -216,7 +190,7 @@ class EyeCareApp:
         self.enabled_var = tk.BooleanVar(value=self.config["enabled"])
         self.temp_var = tk.IntVar(value=self.config["temperature"])
         self.brightness_var = tk.IntVar(value=self.config["brightness"])
-        self.simple_mode_var = tk.BooleanVar(value=self.config.get("use_simple_mode", False))
+        self.strength_var = tk.IntVar(value=self.config.get("strength", 70))
         self.reminder_var = tk.BooleanVar(value=self.config["reminder_enabled"])
         self.interval_var = tk.IntVar(value=self.config["reminder_interval"])
         self.minimize_var = tk.BooleanVar(value=self.config["minimize_to_tray"])
@@ -250,24 +224,39 @@ class EyeCareApp:
         self.temp_label = ttk.Label(temp_header, text=f"{self.temp_var.get()}K", style="Value.TLabel")
         self.temp_label.pack(side=tk.RIGHT)
         
-        # 色温范围: 2600-6500 (更实际的范围)
-        self.temp_scale = ttk.Scale(temp_frame, from_=2600, to=6500, 
+        self.temp_scale = ttk.Scale(temp_frame, from_=3200, to=6500, 
                                     variable=self.temp_var, command=self.on_temp_change)
         self.temp_scale.pack(fill=tk.X, pady=5)
         
         hint_frame = ttk.Frame(temp_frame)
         hint_frame.pack(fill=tk.X)
-        ttk.Label(hint_frame, text="暖色 2600K", foreground="#E65100", font=("", 8)).pack(side=tk.LEFT)
-        ttk.Label(hint_frame, text="冷色 6500K", foreground="#0288D1", font=("", 8)).pack(side=tk.RIGHT)
+        ttk.Label(hint_frame, text="暖 3200K", foreground="#E65100", font=("", 8)).pack(side=tk.LEFT)
+        ttk.Label(hint_frame, text="冷 6500K", foreground="#0288D1", font=("", 8)).pack(side=tk.RIGHT)
         
         # 预设按钮
         preset_frame = ttk.Frame(temp_frame)
         preset_frame.pack(fill=tk.X, pady=(8, 0))
-        presets = [("暖光", 2600), ("夜间", 3400), ("阅读", 4500), ("日光", 6500)]
+        presets = [("暖光", 3200), ("夜间", 4000), ("阅读", 5000), ("日光", 6500)]
         for text, temp in presets:
             btn = ttk.Button(preset_frame, text=text, width=7,
                             command=lambda t=temp: self.set_temp_preset(t))
             btn.pack(side=tk.LEFT, padx=2, expand=True)
+
+        # 效果强度
+        strength_frame = ttk.LabelFrame(main, text="效果强度", padding="8")
+        strength_frame.pack(fill=tk.X, pady=(0, 8))
+        
+        strength_header = ttk.Frame(strength_frame)
+        strength_header.pack(fill=tk.X)
+        ttk.Label(strength_header, text="强度:").pack(side=tk.LEFT)
+        self.strength_label = ttk.Label(strength_header, text=f"{self.strength_var.get()}%", style="Value.TLabel")
+        self.strength_label.pack(side=tk.RIGHT)
+        
+        ttk.Scale(strength_frame, from_=30, to=100, variable=self.strength_var,
+                  command=self.on_strength_change).pack(fill=tk.X, pady=5)
+        
+        ttk.Label(strength_frame, text="强度越高色温效果越明显，建议50-80%", 
+                 foreground="gray", font=("", 8)).pack(anchor=tk.W)
 
         # 亮度
         bright_frame = ttk.LabelFrame(main, text="亮度调节", padding="8")
@@ -279,17 +268,8 @@ class EyeCareApp:
         self.bright_label = ttk.Label(bright_header, text=f"{self.brightness_var.get()}%", style="Value.TLabel")
         self.bright_label.pack(side=tk.RIGHT)
         
-        # 亮度范围: 50-100 (Windows API限制)
         ttk.Scale(bright_frame, from_=50, to=100, variable=self.brightness_var,
                   command=self.on_bright_change).pack(fill=tk.X, pady=5)
-        
-        ttk.Label(bright_frame, text="注: 受系统限制，亮度范围为50%-100%", 
-                 foreground="gray", font=("", 8)).pack(anchor=tk.W)
-        
-        # 兼容模式
-        ttk.Checkbutton(bright_frame, text="兼容模式（如果颜色不正常请勾选）",
-                        variable=self.simple_mode_var, 
-                        command=self.on_mode_change).pack(anchor=tk.W, pady=(5,0))
 
         # 休息提醒
         remind_frame = ttk.LabelFrame(main, text="休息提醒", padding="8")
@@ -342,17 +322,25 @@ class EyeCareApp:
         self.save_config()
 
     def set_temp_preset(self, temp):
-        """预设按钮点击"""
+        """预设按钮"""
         self.temp_var.set(temp)
         self.temp_label.config(text=f"{temp}K")
         self.config["temperature"] = temp
         
-        # 确保开启护眼模式
         if not self.enabled_var.get():
             self.enabled_var.set(True)
             self.config["enabled"] = True
         
         self.apply_settings()
+        self.save_config()
+
+    def on_strength_change(self, val):
+        strength = int(float(val))
+        self.strength_var.set(strength)
+        self.strength_label.config(text=f"{strength}%")
+        self.config["strength"] = strength
+        if self.enabled_var.get():
+            self.apply_settings()
         self.save_config()
 
     def on_bright_change(self, val):
@@ -364,37 +352,30 @@ class EyeCareApp:
             self.apply_settings()
         self.save_config()
 
-    def on_mode_change(self):
-        self.config["use_simple_mode"] = self.simple_mode_var.get()
-        if self.enabled_var.get():
-            self.apply_settings()
-        self.save_config()
-
     def apply_settings(self):
         """应用当前设置"""
-        temp = self.config["temperature"]
-        bright = self.config["brightness"]
-        
-        if self.config.get("use_simple_mode", False):
-            self.gamma.set_simple_gamma(temp, bright)
-        else:
-            self.gamma.set_gamma(temp, bright)
+        self.gamma.set_gamma(
+            temperature=self.config["temperature"],
+            brightness=self.config["brightness"],
+            strength=self.config.get("strength", 70)
+        )
 
     def reset(self):
         self.temp_var.set(6500)
         self.brightness_var.set(100)
+        self.strength_var.set(70)
         self.enabled_var.set(False)
-        self.simple_mode_var.set(False)
         
         self.config.update({
             "temperature": 6500,
             "brightness": 100,
-            "enabled": False,
-            "use_simple_mode": False
+            "strength": 70,
+            "enabled": False
         })
         
         self.temp_label.config(text="6500K")
         self.bright_label.config(text="100%")
+        self.strength_label.config(text="70%")
         self.gamma.restore()
         self.save_config()
 
@@ -497,19 +478,17 @@ class EyeCareApp:
         messagebox.showinfo("关于", f"""护眼卫士 v{self.VERSION}
 
 功能:
-• 色温调节 2600K-6500K
+• 色温调节 3200K-6500K
+• 效果强度 30%-100%
 • 亮度调节 50%-100%
 • 定时休息提醒
 • 系统托盘运行
 
-色温建议:
-• 日间办公: 5500-6500K
-• 傍晚使用: 4000-5000K
-• 夜间阅读: 3000-4000K
-• 深夜护眼: 2600-3000K
-
-注: 受Windows API限制，
-色温和亮度有一定范围限制""")
+使用建议:
+• 日间: 5500-6500K, 强度50%
+• 傍晚: 4500-5500K, 强度60%
+• 夜间: 3500-4500K, 强度70%
+• 深夜: 3200-3500K, 强度80%""")
 
     def load_config(self):
         try:
@@ -524,7 +503,7 @@ class EyeCareApp:
             self.config["reminder_enabled"] = self.reminder_var.get()
             self.config["minimize_to_tray"] = self.minimize_var.get()
             self.config["reminder_interval"] = self.interval_var.get()
-            self.config["use_simple_mode"] = self.simple_mode_var.get()
+            self.config["strength"] = self.strength_var.get()
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f, ensure_ascii=False, indent=2)
         except:
@@ -533,7 +512,7 @@ class EyeCareApp:
     def run(self):
         self.root.update_idletasks()
         x = (self.root.winfo_screenwidth() - 420) // 2
-        y = (self.root.winfo_screenheight() - 550) // 2
+        y = (self.root.winfo_screenheight() - 600) // 2
         self.root.geometry(f"+{x}+{y}")
         self.root.mainloop()
 
